@@ -1,0 +1,16 @@
+---
+title: "classic_dissociation"
+author: "pss"
+date: "December 6, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+d <- readr::read_csv(file.path(devtools::package_file(),"data","data.csv"))
+object_names <- readr::read_csv(file.path(devtools::package_file(),"data","objectNames.csv"))
+
+```
+
