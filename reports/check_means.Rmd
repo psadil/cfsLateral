@@ -1,0 +1,64 @@
+---
+title: "check_means"
+author: "pss"
+date: "December 8, 2017"
+output: html_document
+params:
+  file: "data_updated_full_"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE, echo = FALSE, message = FALSE)
+
+devtools::load_all()
+library(tidyverse)
+library(magrittr)
+library(stringdist)
+library(Hmisc)
+
+cbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+
+colmap <- c(`Not Studied` = cbPalette[7]
+            ,`Word` = cbPalette[2]
+            ,`CFS, Image` =cbPalette[3]
+            ,`Binocular, Image`=cbPalette[4])
+conditions = names(colmap)
+
+
+targets <- readr::read_csv(file.path(devtools::package_file(),"data",'objectNames.csv'), col_names = FALSE) %>%
+  mutate(object = 1:n())
+
+
+d <- readr::read_csv(file.path(devtools::package_file(),"data","tmp","data",paste0(params$file, ".csv"))) %>%
+  rename(object = whichItem) %>%
+  mutate(condition = factor(conditions[condition.y], levels = conditions)) %>%
+  mutate(subject=factor(subject),
+         pas1 = factor(pas1),
+         pas2 = factor(pas2))
+
+```
+
+
+```{r check}
+
+d %>%
+  group_by(condition) %>%
+  summarise(afc = mean(afc), naming = mean(named))
+
+
+```
+
+```{r}
+d %>%
+  group_by(condition) %>%
+  summarise(afc = mean(afc), naming = mean(named))
+
+```
+
+```{r}
+
+
+
+```
+

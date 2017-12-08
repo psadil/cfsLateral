@@ -16,6 +16,9 @@ dir.report_params <- file.path(dir.output, 'report_params')
 if (!dir.exists(dir.stan)){
   dir.create(dir.stan)
 }
+if (!dir.exists(dir.figures)){
+  dir.create(dir.figures)
+}
 if (!dir.exists(dir.output)){
   dir.create(dir.output)
 }

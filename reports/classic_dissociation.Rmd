@@ -1,0 +1,132 @@
+---
+title: "classic_dissociation"
+author: "pss"
+date: "December 6, 2017"
+output: html_document
+params:
+  cutoff: 1
+  chains: 2
+  iter: 1000
+  warmup: 1000
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE, echo = FALSE, message = FALSE)
+
+devtools::load_all()
+library(tidyverse)
+library(magrittr)
+library(stringdist)
+library(Hmisc)
+library(ggridges)
+library(modelr)
+library(broom)
+library(brms)
+options(mc.cores = params$chains)
+
+cbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+
+colmap <- c(`Not Studied` = cbPalette[7]
+            ,`Word` = cbPalette[2]
+            ,`CFS, Image` =cbPalette[3]
+            ,`Binocular, Image`=cbPalette[4])
+conditions = names(colmap)
+
+
+old_theme <- theme_set(theme_classic(base_size = 12)) +
+  theme_update(
+    axis.ticks = element_blank()
+    , axis.line = element_line(size=1)
+    , plot.margin=margin(rep(0,4))
+  )
+
+
+targets <- readr::read_csv(file.path(devtools::package_file(),"data",'objectNames.csv'), col_names = FALSE) %>%
+  mutate(object = 1:n())
+
+
+d <- readr::read_csv(file.path(devtools::package_file(),"data",'data.csv')) %>%
+  left_join(.,targets, by="object") %>%
+  mutate(condition = factor(conditions[condition], levels = conditions)) %>%
+  mutate(subject=factor(subject),
+         pas = factor(pas),
+         pas2 = factor(pas2)) %>%
+  nest(X1:X10, .key = targets) %>%
+  mutate(firstTarget = map_chr(targets, ~extract2(.x, 1))) %>%
+  mutate(dl = map2(responses, targets, ~stringdist(.x, unlist(.y), method="dl"))) %>%
+  mutate(minDist = map2_dbl(responses, dl, ~if_else(is.na(.x), 0, min(.y, na.rm=TRUE))))  %>% # warning appears but can be ignored due to if_else
+  mutate(name_correct = if_else(minDist < params$cutoff, 1, 0)) 
+
+
+d %>%
+  group_by(condition) %>%
+  summarise(afc = mean(afc), naming = mean(name_correct))
+
+```
+
+```{r plot}
+
+# afc_model <- ez::ezANOVA(data = d, dv = afc,
+#                          wid = subject,
+#                          within = condition)
+# name_model <- ez::ezANOVA(data = d, dv = name_correct,
+#                          wid = subject,
+#                          within = condition)
+
+emmeans::emm_options(pbkrtest.limit = 6784)
+afc_mod0 <- lme4::lmer(afc ~ condition + (1 | subject) + (1 | object), data=d)
+name_mod0 <- lme4::lmer(name_correct ~ condition + (1 | subject) + (1 | object), data=d)
+
+afc_contrasts <- emmeans::emmeans(afc_mod0, ~condition, weights = "cells", contr = "pairwise")
+name_contrasts <- emmeans::emmeans(name_mod0, ~condition, weights = "cells", contr = "pairwise")
+
+```
+
+
+```{r brms}
+
+afc_f <- brms::bf(afc ~ condition + (1 | subject) + (1 | object),
+                  family = bernoulli())
+
+afc_brm <- brms::brm(afc_f,
+                     prior = c(prior(student_t(3,0,10), class = "b")),
+                     data=d,
+                     family = bernoulli(),
+                     chains = params$chains,
+                     warmup = params$warmup,
+                     iter = params$warmup + params$iter,
+                     sample_prior = TRUE,
+                     save_model = file.path(devtools::package_file(),"stan","dissoc_brm.stan")
+)
+
+name_f <- brms::bf(name_correct ~ condition + (1 | subject) + (1 | object))
+
+name_brm <- brms::brm(name_f,
+                      prior = c(prior(student_t(3,0,10), class = "b")),
+                      data=d,
+                      family = bernoulli(),
+                      chains = params$chains,
+                      warmup = params$warmup,
+                      iter = params$warmup + params$iter,
+                      sample_prior = TRUE,
+                      save_model = file.path(devtools::package_file(),"stan","dissoc_brm.stan")
+)
+
+hyp_afc <- hypothesis(afc_brm, "conditionCFSImage = conditionWord")
+hyp_name <- hypothesis(name_brm, "conditionCFSImage = conditionWord")
+
+```
+
+
+```{r plot2, fig.width = 7}
+
+d %>%
+  gather(key = Question, value = Accuracy, c("afc","name_correct")) %>%
+  ggplot(aes(x=condition, y=Accuracy, color = condition)) +
+  facet_wrap(~Question) +
+  stat_summary(fun.y = "mean", na.rm = TRUE, geom="point") +
+  coord_cartesian(ylim = c(.25, 1)) 
+
+```
+
