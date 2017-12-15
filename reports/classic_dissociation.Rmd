@@ -22,6 +22,7 @@ library(ggridges)
 library(modelr)
 library(broom)
 library(brms)
+library(ggpubr)
 options(mc.cores = params$chains)
 
 cbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
@@ -63,70 +64,141 @@ d %>%
   group_by(condition) %>%
   summarise(afc = mean(afc), naming = mean(name_correct))
 
+d %>%
+  gather(Question, Correct, c("afc","name_correct")) %>%
+  spread(condition, Correct) %>%
+  group_by(subject, Question) %>%
+  summarise(`Not Studied` = mean(`Not Studied`, na.rm =TRUE), 
+            `Word` = mean(`Word`, na.rm =TRUE),
+            `CFS, Image` = mean(`CFS, Image`, na.rm =TRUE),
+            `Binocular, Image` = mean(`Binocular, Image`, na.rm =TRUE)) %>%
+  mutate(between = 1) %>%
+  select(subject, between, Question, `Not Studied`, `Word`, `CFS, Image`, `Binocular, Image`) %>%
+  mutate(Question = plyr::mapvalues(Question, from=c("afc","name_correct"), to=1:2),
+         Question = as.numeric(Question)) %>%
+  readr::write_csv(path = file.path(devtools::package_file(),"data",'data_temporary.csv'),
+                   col_names = FALSE)
+
 ```
 
 ```{r plot}
 
-# afc_model <- ez::ezANOVA(data = d, dv = afc,
-#                          wid = subject,
-#                          within = condition)
-# name_model <- ez::ezANOVA(data = d, dv = name_correct,
-#                          wid = subject,
-#                          within = condition)
-
 emmeans::emm_options(pbkrtest.limit = 6784)
-afc_mod0 <- lme4::lmer(afc ~ condition + (1 | subject) + (1 | object), data=d)
-name_mod0 <- lme4::lmer(name_correct ~ condition + (1 | subject) + (1 | object), data=d)
+afc_mod0 <- lme4::lmer(afc ~ condition + (1 | subject), data=d)
+name_mod0 <- lme4::lmer(name_correct ~ condition + (1 | subject), data=d)
 
-afc_contrasts <- emmeans::emmeans(afc_mod0, ~condition, weights = "cells", contr = "pairwise")
-name_contrasts <- emmeans::emmeans(name_mod0, ~condition, weights = "cells", contr = "pairwise")
-
-```
-
-
-```{r brms}
-
-afc_f <- brms::bf(afc ~ condition + (1 | subject) + (1 | object),
-                  family = bernoulli())
-
-afc_brm <- brms::brm(afc_f,
-                     prior = c(prior(student_t(3,0,10), class = "b")),
-                     data=d,
-                     family = bernoulli(),
-                     chains = params$chains,
-                     warmup = params$warmup,
-                     iter = params$warmup + params$iter,
-                     sample_prior = TRUE,
-                     save_model = file.path(devtools::package_file(),"stan","dissoc_brm.stan")
-)
-
-name_f <- brms::bf(name_correct ~ condition + (1 | subject) + (1 | object))
-
-name_brm <- brms::brm(name_f,
-                      prior = c(prior(student_t(3,0,10), class = "b")),
-                      data=d,
-                      family = bernoulli(),
-                      chains = params$chains,
-                      warmup = params$warmup,
-                      iter = params$warmup + params$iter,
-                      sample_prior = TRUE,
-                      save_model = file.path(devtools::package_file(),"stan","dissoc_brm.stan")
-)
-
-hyp_afc <- hypothesis(afc_brm, "conditionCFSImage = conditionWord")
-hyp_name <- hypothesis(name_brm, "conditionCFSImage = conditionWord")
+afc_contrasts <- emmeans::emmeans(afc_mod0, ~condition, contr = "pairwise", lmer.df = "kenward-roger", weights = "cells")
+name_contrasts <- emmeans::emmeans(name_mod0, ~condition, contr = "pairwise", lmer.df = "kenward-roger", weights = "cells")
 
 ```
+
 
 
 ```{r plot2, fig.width = 7}
 
-d %>%
-  gather(key = Question, value = Accuracy, c("afc","name_correct")) %>%
-  ggplot(aes(x=condition, y=Accuracy, color = condition)) +
+afc_tidy <- tidy(afc_contrasts$emmeans) %>%
+  mutate(Question = "2AFC")
+name_tidy <- tidy(name_contrasts$emmeans) %>%
+  mutate(Question = "Naming")
+
+emmeans_tidy <- full_join(afc_tidy, name_tidy)
+
+
+p <- emmeans_tidy  %>%
+  ggplot(aes(x=condition, y=estimate, 
+             ymin = estimate-std.error, ymax = estimate+std.error, 
+             color = condition, shape = condition, fill = condition)) +
   facet_wrap(~Question) +
-  stat_summary(fun.y = "mean", na.rm = TRUE, geom="point") +
-  coord_cartesian(ylim = c(.25, 1)) 
+  geom_errorbar(width=0.2, color = "black") +
+  geom_point(size = 2) +
+  coord_cartesian(ylim = c(.25, 1)) +
+  scale_y_continuous(name  = "Accuracy") +
+  scale_x_discrete(name = NULL, labels = NULL) +
+  scale_color_manual("Condition", values=colmap) +
+  scale_fill_manual("Condition", values=colmap) +
+  scale_shape_manual("Condition", values = c(19, 24, 25, 15)) +
+  annotate("segment", x = 2, xend= 3, y=Inf, yend=Inf,color="black",lwd=1) +
+  theme(
+    strip.background = element_blank()
+    , strip.text = element_text(face = "bold")
+    , legend.position = "bottom"
+  )
+
+  
+pdf(file.path(devtools::package_file(),"output",'dissoc.pdf'), width = 6, height = 4)
+plot(p)
+dev.off()
+
+```
+
+
+
+```{r}
+
+scaleFUN <- function(x) sprintf("%.2f", x)
+
+samples <- readr::read_rds(file.path(devtools::package_file(),"data",'samples.rds')) %>%
+  mutate(Condition = as.character(Condition),
+         Condition = plyr::mapvalues(Condition, from=unique(Condition), to = conditions),
+         Condition = factor(Condition , levels = conditions))
+
+p1 <- samples %>%
+  ggplot(aes( x = afc, y = named, 
+              fill = Condition, linetype = Condition) ) +
+  stat_ellipse(geom = "polygon",  type='norm', color = "black") +
+  scale_fill_manual(values=colmap) +
+  scale_linetype_manual(values=c("solid", "longdash", "dotted", "dotdash")) +
+  scale_y_continuous(breaks=seq(from= -1, to=1, by=1), name ="Naming (Identity Knowledge)") +
+  scale_x_continuous(breaks=seq(from= -.5, to=1.5, by=1), name ="2AFC (Visual Knowledge)") +
+  # coord_cartesian(xlim=c(-1,1.5), ylim=c(-1,1.5)) +
+  # geom_hline(yintercept = 0) +
+  # geom_vline(xintercept = 0) +
+  coord_fixed(xlim=c(-.5, 1.5), ylim=c(-1, 1)) +
+  theme_classic(base_size = 12, base_family = "Arial") +
+  theme(        
+    axis.ticks = element_blank()
+    # , axis.title = element_text(margin = margin(rep(0,4)))
+    # , axis.text.x = element_text(margin = margin(rep(0,4)))
+    # , axis.text.y = element_text(margin = margin(rep(0,4)))
+    , legend.position = "none"
+    , axis.line = element_line(size=1)
+    , plot.margin=margin(rep(0,4))
+  ) +
+    annotate("text", x=0.2, y=.75, label = "Estimated Effect") 
+
+
+d2 <- readr::read_csv(file.path(devtools::package_file(),"data",'forR.csv')) %>%
+    mutate(Condition = factor(conditions,levels=conditions))
+p2 <- d2 %>%
+  ggplot(aes(x=AFC, y=Name, 
+             color=Condition, shape = Condition, fill=Condition,
+             group = 1)) +
+  geom_errorbar(aes(ymin=Name-errY, ymax=Name+errY), width=.01, size=.5, color = "black") +
+  geom_errorbarh(aes(xmin=AFC-errX, xmax=AFC+errX), height=.01, size=.5, color = "black") +
+  geom_path(aes(x=xPred,y=yPred), color='black', linetype='longdash', size=1)  +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scaleFUN, breaks=c(.3, .45, .6), name = "Naming (Identity Knowledge)") +
+  scale_x_continuous(labels = scaleFUN, breaks=c(.5, .65, .8), name = "2AFC (Visual Knowledge)") +
+  scale_colour_manual(values=colmap) +
+  scale_fill_manual(values=colmap) +
+  scale_shape_manual(values = c(19, 24, 25, 15)) +
+  coord_fixed(xlim=c(.45, .85), ylim=c(.25, .65)) +
+  theme_classic(base_size = 12, base_family = "Arial") +
+  theme(        
+    axis.ticks = element_blank()
+    # , legend.position = "right"
+    , axis.line = element_line(size=1)
+    , plot.margin=margin(rep(0,4))
+  ) +
+  annotate("text", x=.65, y=.5625, label = "Proportion Correct")
+
+
+figure <- ggpubr::ggarrange(p1, p2, labels = c("(a)", "(b)"),
+                            ncol = 2, nrow = 1,
+                            common.legend = TRUE, legend = "bottom") 
+tikzDevice::tikz(file.path(devtools::package_file(),"output",'sta-results.tikz'), width = 6, height = 4)
+plot(figure)
+dev.off()
 
 ```
 
